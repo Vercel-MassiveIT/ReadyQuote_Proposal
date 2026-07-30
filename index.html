@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <script src="https://cdn.jsdelivr.net/npm/@pipedrive/app-extensions-sdk/dist/index.umd.js"></script>
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      padding: 10px;
+      margin: 0;
+    }
+
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    button, a.link-btn {
+      width: 100%;
+      padding: 10px 14px;
+      box-sizing: border-box;
+      cursor: pointer;
+      background-color: #107C10;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 14px;
+      text-decoration: none;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 0.2s ease;
+    }
+
+    button:hover:not(:disabled),
+    a.link-btn:hover {
+      filter: brightness(0.95);
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    a.link-btn {
+      background-color: #0f6cbd;
+    }
+
+    a.link-btn.bom-link {
+      background-color: #8661c5;
+    }
+
+    .muted {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-top: 2px solid white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="stack">
+    <div id="status" class="muted">Loading...</div>
+
+    <button id="createButton" type="button" disabled>
+      <span id="buttonText">Loading...</span>
+    </button>
+
+    <a id="openLink" class="link-btn" href="#" target="_blank" style="display:none;">
+      Open Proposal
+    </a>
+
+    <a id="openBomLink" class="link-btn bom-link" href="#" target="_blank" style="display:none;">
+      Open BoM
+    </a>
+  </div>
+
+  <script>
+    let sdk = null;
+    let dealId = null;
+    let proposalUrl = null;
+    let bomUrl = null;
+
+    const statusEl = document.getElementById("status");
+    const createButton = document.getElementById("createButton");
+    const buttonText = document.getElementById("buttonText");
+    const openLink = document.getElementById("openLink");
+    const openBomLink = document.getElementById("openBomLink");
+
+    function getDealIdFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get("selectedIds") || "").split(",")[0] || null;
+    }
+
+    async function fetchDealData() {
+      if (!dealId) {
+        throw new Error("No deal ID found");
+      }
+
+      const response = await fetch(
+        `https://panda-docs-proposal.vercel.app/api/deal-details?dealId=${encodeURIComponent(dealId)}`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch deal data: HTTP ${response.status}`);
+      }
+
+      return await response.json();
+    }
+
+    async function loadProposalState() {
+      statusEl.textContent = "Loading proposal info...";
+      createButton.disabled = true;
+      buttonText.textContent = "Loading...";
+
+      try {
+        const dealResponse = await fetchDealData();
+        console.log("dealResponse from API:", dealResponse);
+
+        proposalUrl = dealResponse?.proposalUrl || null;
+        bomUrl = dealResponse?.bomUrl || null;
+        console.log("proposalUrl from API:", proposalUrl);
+        console.log("bomUrl from API:", bomUrl);
+
+        if (proposalUrl) {
+          statusEl.textContent = "Proposal link available.";
+          openLink.href = proposalUrl;
+          openLink.style.display = "flex";
+          buttonText.textContent = "Recreate Proposal";
+          createButton.disabled = false;
+        } else {
+          statusEl.textContent = "No proposal link saved yet.";
+          openLink.style.display = "none";
+          buttonText.textContent = "Create Proposal";
+          createButton.disabled = false;
+        }
+
+        if (bomUrl) {
+          openBomLink.href = bomUrl;
+          openBomLink.style.display = "flex";
+        } else {
+          openBomLink.style.display = "none";
+        }
+      } catch (error) {
+        console.error("Error loading proposal state:", error);
+        statusEl.textContent = "Failed to load proposal info.";
+        buttonText.textContent = "Create Proposal";
+        openLink.style.display = "none";
+        openBomLink.style.display = "none";
+        createButton.disabled = false;
+      }
+    }
+
+    async function init() {
+      try {
+        if (!window.AppExtensionsSDK) {
+          throw new Error("AppExtensionsSDK not found");
+        }
+
+        sdk = new window.AppExtensionsSDK();
+        await sdk.initialize();
+        console.log("SDK initialized");
+
+        try {
+          await sdk.execute("resize", { height: 280 });
+        } catch (resizeError) {
+          console.warn("Resize failed:", resizeError);
+        }
+
+        dealId = getDealIdFromUrl();
+        console.log("Resolved dealId:", dealId);
+
+        if (!dealId) {
+          statusEl.textContent = "No deal ID found.";
+          buttonText.textContent = "Unavailable";
+          createButton.disabled = true;
+          return;
+        }
+
+        await loadProposalState();
+      } catch (error) {
+        console.error("Init failed:", error);
+        statusEl.textContent = "Failed to load panel.";
+        buttonText.textContent = "Unavailable";
+        createButton.disabled = true;
+      }
+    }
+
+    createButton.addEventListener("click", async (e) => {
+      e.preventDefault();
+
+      try {
+        if (!dealId) {
+          throw new Error("No deal ID found");
+        }
+
+        createButton.disabled = true;
+        buttonText.textContent = proposalUrl ? "Recreating..." : "Creating...";
+
+        const spinner = document.createElement("div");
+        spinner.classList.add("spinner");
+        createButton.appendChild(spinner);
+
+        const response = await fetch(
+          "https://massiveit.app.n8n.cloud/webhook/proposal_button",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dealId })
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        statusEl.textContent = "Proposal created. Refreshing...";
+        await loadProposalState();
+
+        if (sdk) {
+          await sdk.execute("showSnackbar", {
+            message: proposalUrl ? "Proposal recreated successfully" : "Proposal created successfully",
+            duration: 3000
+          });
+        }
+      } catch (error) {
+        console.error("Error creating proposal:", error);
+        statusEl.textContent = "Failed to create proposal.";
+
+        if (sdk) {
+          await sdk.execute("showSnackbar", {
+            message: error.message || "Something went wrong",
+            duration: 3000
+          });
+        }
+      } finally {
+        const spinner = createButton.querySelector(".spinner");
+        if (spinner) spinner.remove();
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
